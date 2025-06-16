@@ -27,3 +27,81 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+  snyk-scan:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: refs/tags/${{ github.event.inputs.tagName }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 'lts/*'
+
+      - name: Install dependencies
+        run: npm install # Or npm ci for cleaner installs if a lockfile is strictly used
+
+      - name: Run Snyk to check for vulnerabilities
+        run: snyk test
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  publish-package:
+    runs-on: ubuntu-latest
+    needs: snyk-scan
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: refs/tags/${{ github.event.inputs.tagName }}
+          fetch-depth: 0 # Important for npm version
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 'lts/*'
+
+      - name: Extract version from tag
+        id: get_version
+        run: echo "version=$(echo ${{ github.event.inputs.tagName }} | sed 's/^v//')" >> $GITHUB_OUTPUT
+
+      - name: Update package.json version
+        run: npm version ${{ steps.get_version.outputs.version }} --no-git-tag-version --allow-same-version
+
+      - name: Install dependencies
+        run: npm install --omit=dev # Install only prod dependencies for packaging
+
+      - name: Create tarball
+        run: npm pack
+
+      - name: Get tarball name
+        id: get_tarball_name
+        run: echo "tarball_name=$(ls -1 *.tgz | head -n 1)" >> $GITHUB_OUTPUT
+
+      - name: Import GPG Key
+        run: |
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+          gpg --list-secret-keys --keyid-format LONG
+
+      - name: Sign the tarball
+        run: |
+          gpg --batch --yes --detach-sign --armor \
+          --pinentry-mode loopback --passphrase "${{ secrets.GPG_PASSPHRASE }}" \
+          "${{ steps.get_tarball_name.outputs.tarball_name }}"
+
+      - name: Extract JFrog Hostname
+        id: get_jfrog_hostname
+        run: echo "hostname=$(echo ${{ secrets.JFROG_URL }} | sed -e 's;^https://\([^/]*\)/.*;\1;g')" >> $GITHUB_OUTPUT
+
+      - name: Configure .npmrc for JFrog
+        run: |
+          echo "registry=${{ secrets.JFROG_URL }}" > .npmrc
+          echo "//${{ steps.get_jfrog_hostname.outputs.hostname }}/:_authToken=${{ secrets.JFROG_AUTH_TOKEN }}" >> .npmrc
+          echo "always-auth=true" >> .npmrc
+
+      - name: Publish to JFrog
+        run: npm publish "${{ steps.get_tarball_name.outputs.tarball_name }}"
