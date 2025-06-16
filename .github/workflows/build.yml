@@ -1,0 +1,29 @@
+name: Build Workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      tagName:
+        description: 'Enter the tag to build (e.g., v1.2.3)'
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: refs/tags/${{ github.event.inputs.tagName }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 'lts/*' # Use the latest LTS version of Node.js
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run tests
+        run: npm test
