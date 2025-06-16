@@ -5,7 +5,7 @@ on:
     types:
       - closed
     branches:
-      - main
+      - master # Changed from main to master
 
 jobs:
   build:
